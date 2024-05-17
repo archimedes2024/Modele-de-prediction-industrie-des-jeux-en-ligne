@@ -1,0 +1,754 @@
+---
+title: "modele kaggle"
+author: "xx"
+date: "2023-03-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+```{r}
+library(plyr)
+library(readr)
+library(dplyr)
+library(caret)
+library(caretEnsemble)
+library(nnet)
+library(randomForest)
+library(caTools)
+library(ranger)
+##library(summarytools)
+library(gbm)
+library(gmodels)
+library(rpart)
+library(rpart.plot)
+```
+
+
+```{r}
+#téléchargement des données d’entrainement et de test
+datest <- read.csv("C:/Users/a/Desktop/MAITRISE HEC/SESSION_4_AUTOMNE_2023/DATA MINING/documents_etudiants_A2023/documents_etudiants_A2023/travail_equipe_fichiers_etudiants/devoir-60600-a2023/test.csv")
+
+datrain <- read.csv("C:/Users/a/Desktop/MAITRISE HEC/SESSION_4_AUTOMNE_2023/DATA MINING/documents_etudiants_A2023/documents_etudiants_A2023/travail_equipe_fichiers_etudiants/devoir-60600-a2023/train.csv")
+```
+
+
+```{r}
+str(datrain)
+```
+```{r}
+sum(is.na(datrain))
+```
+```{r}
+summary(datrain)
+```
+
+
+#préparation des données
+```{r}
+datrain$y=factor(datrain$y)
+
+
+datrain$country=factor(datrain$country)
+datest$country=factor(datest$country)
+
+datrain$difflevel=factor(datrain$difflevel)
+datest$difflevel=factor(datest$difflevel)
+
+
+```
+
+
+```{r}
+with(datrain, table(y))
+```
+
+
+#séparation du fichier d'entrainement
+```{r}
+set.seed(3454)
+
+spl = sample.split(datrain$y, SplitRatio = 0.7)
+train_train = subset(datrain, spl==TRUE)
+train_val = subset(datrain, spl==FALSE)
+rm(spl)
+```
+
+
+# Forêt aléatoire avec ranger base professeur                                   MODELE benchkmark
+```{r}
+
+
+set.seed(1234)
+rfdev=ranger(y~.,data=train_train, respect.unordered.factors="partition",splitrule="gini")
+rfdev
+
+# Prédictions sur les données test
+predrf=as.numeric(predict(rfdev,data=train_val)[[1]])
+
+#évaluation du modèle
+#table(prediRF_tr_val$predy, train_val$y)
+
+# Tableau croisée entre les prédictions et les vraies valeurs
+CrossTable(predrf,train_val$y)
+
+
+# Taux de bonne classification.
+mean(predrf==train_val$y)
+
+
+```
+
+
+# Forêt aléatoire avec ranger probability= TRUE                                 MODELE 1
+```{r}
+
+#datrain$y=factor(datrain$y)
+
+set.seed(1234)
+modelRF_tr_tr=ranger(y~.,data=train_train, 
+                 probability = TRUE,
+                 importance="permutation", 
+                 respect.unordered.factors="partition",
+                 splitrule="gini")
+
+
+#prediction sur validation
+# Calcul des prédictions pour les données validation Ici, on obtient les probabilités estimées.
+prediRFtrtr_trval = as.data.frame(predict(modelRF_tr_tr, data = train_val))
+
+# Calcul des prédictions 
+prediRFtrtr_trval$pred<-apply(prediRFtrtr_trval, 1, max)
+prediRFtrtr_trval$predy<-ifelse(prediRFtrtr_trval$pred==prediRFtrtr_trval$X1,
+                      1,
+                      ifelse(prediRFtrtr_trval$pred==prediRFtrtr_trval$X2,
+                      2,
+                      ifelse(prediRFtrtr_trval$pred==prediRFtrtr_trval$X3,
+                      3,
+                      ifelse(prediRFtrtr_trval$pred==prediRFtrtr_trval$X4,
+                      4,0))))
+
+#évaluation du modèle
+#table(prediRF_tr_val$predy, train_val$y)
+
+# Tableau croisée entre les prédictions et les vraies valeurs
+CrossTable(prediRFtrtr_trval$predy,train_val$y)
+
+
+# Taux de bonne classification.
+mean(prediRFtrtr_trval$predy==train_val$y)
+
+```
+
+
+
+```{r}
+# Data frame qui va contenir les résultats pour tous les modèles
+
+resmobile = data.frame(rbind(c(mean(predrf==train_val$y),1-mean(predrf==train_val$y)),
+            c(mean(prediRFtrtr_trval$predy==train_val$y),
+              1-mean(prediRFtrtr_trval$predy==train_val$y))))
+
+# TBC = taux de bonne classification.
+# TMC = taux de mauvaise classification = 1 - TBC.
+
+names(resmobile) = c("TBC","TMC")
+row.names(resmobile)=c("Random forest base prof","Random forest probabilty")
+
+resmobile
+```
+
+
+#soumission probability = TRUE
+```{r}
+
+model_RF_train=ranger(y~.,data=datrain, 
+                 probability = TRUE,
+                 importance="permutation", 
+                 respect.unordered.factors="partition",
+                 splitrule="gini")
+
+
+#4.4-prediction sur données de test
+# Calcul des prédictions pour les données test Ici, on obtient les probabilités estimées.
+
+prediRFtr_test=as.data.frame(predict(model_RF_train,data=datest))
+
+# Calcul des prédictions
+
+prediRFtr_test$pred<-apply(prediRFtr_test, 1, max)
+prediRFtr_test$y<- ifelse(prediRFtr_test$pred==prediRFtr_test$X1,1,
+                   ifelse(prediRFtr_test$pred==prediRFtr_test$X2,2,
+                   ifelse(prediRFtr_test$pred==prediRFtr_test$X3,3,
+                   ifelse(prediRFtr_test$pred==prediRFtr_test$X4,4,
+                                                                 0))))
+
+# Le fichier pour la soumission doit contenir 2 colonnes : « id » et « y ».
+# Le « id » est celui déjà dans le fichier « test.csv ».
+rfmodel_soumission=data.frame("id"=datest$id,"y"=prediRFtr_test$y)
+
+
+# Sauvegarde du fichier de prédictions
+#pa=""
+#write.csv(rfmodel_soumission,paste(pa,"rfmodel_soumission.csv"), row.names = FALSE)
+
+# Soumettre ensuite le fichier créé "rfbase.csv" à Kaggle.
+
+
+
+
+```
+
+
+#random forest optimization mtry cv                                            MODELE 2
+```{r}
+set.seed(1)
+library(caret)
+
+# Crear un objeto tune.grid con los valores de mtry a evaluar
+tune.grid <- expand.grid(mtry = c(1:16))
+
+# Crear un objeto de control para el entrenamiento
+control <- trainControl(method = "cv",number = 5, verboseIter = TRUE)
+
+# Entrenar el modelo utilizando la función train() y los datos de entrenamiento
+model <- train(y ~ ., data = train_train, 
+               method = "rf", 
+               trControl = control, 
+               tuneGrid = tune.grid,
+               probability = TRUE,
+               splitrule="gini",
+               respect.unordered.factors="partition"
+               )
+
+
+#Identifier la valeur optimale de mtry que minimise le taux d'error OOB.
+optimal_mtry <- model$bestTune$mtry
+
+# Imprimir el modelo ajustado y los resultados
+print(model)
+```
+
+
+#Ajuster un modele final en utilizant la valeur optimale de mtry
+```{r}
+final_model <- ranger(y ~ ., data = train_train, 
+                       
+                      probability = TRUE, 
+                      importance = "permutation", 
+                      respect.unordered.factors = "partition", 
+                      splitrule = "gini", 
+                      mtry = optimal_mtry)
+```
+
+
+#prediction sur validation
+```{r}
+
+# Calcul des prédictions pour les données validation Ici, on obtient les probabilités estimées.
+prediRFtrtr_mtry_trval = as.data.frame(predict(final_model, data = train_val))
+
+# Calcul des prédictions 
+prediRFtrtr_mtry_trval$pred<-apply(prediRFtrtr_mtry_trval, 1, max)
+prediRFtrtr_mtry_trval$predy<-ifelse(prediRFtrtr_mtry_trval$pred==prediRFtrtr_mtry_trval$X1,
+                      1,
+                      ifelse(prediRFtrtr_mtry_trval$pred==prediRFtrtr_mtry_trval$X2,
+                      2,
+                      ifelse(prediRFtrtr_mtry_trval$pred==prediRFtrtr_mtry_trval$X3,
+                      3,
+                      ifelse(prediRFtrtr_mtry_trval$pred==prediRFtrtr_mtry_trval$X4,
+                      4,0))))
+
+#évaluation du modèle
+#table(prediRF_tr_val$predy, train_val$y)
+
+# Tableau croisée entre les prédictions et les vraies valeurs
+CrossTable(prediRFtrtr_mtry_trval$predy,train_val$y)
+
+
+# Taux de bonne classification.
+mean(prediRFtrtr_mtry_trval$predy==train_val$y)
+```
+
+
+```{r}
+resmobile=rbind(resmobile,
+                "RF (mtry opt cv)"=c(mean(prediRFtrtr_mtry_trval$predy==train_val$y),
+                      1-mean(prediRFtrtr_mtry_trval$predy==train_val$y)))
+
+resmobile
+```
+
+
+
+#soumission RF (mtry opt cv)
+```{r}
+#pour soumission
+model_mtry_train <- ranger(y ~ ., data = datrain, 
+                       
+                      probability = TRUE, 
+                      importance = "permutation", 
+                      respect.unordered.factors = "partition", 
+                      splitrule = "gini", mtry = optimal_mtry)
+
+
+#prediction sur validation
+# Calcul des prédictions pour les données validation Ici, on obtient les probabilités estimées.
+prediRFtr_mtry_test = as.data.frame(predict(model_mtry_train, data = datest))
+
+# Calcul des prédictions pour les donnees test
+prediRFtr_mtry_test$pred<-apply(prediRFtr_mtry_test, 1, max)
+prediRFtr_mtry_test$y<-ifelse(prediRFtr_mtry_test$pred==prediRFtr_mtry_test$X1,
+                      1,
+                      ifelse(prediRFtr_mtry_test$pred==prediRFtr_mtry_test$X2,
+                      2,
+                      ifelse(prediRFtr_mtry_test$pred==prediRFtr_mtry_test$X3,
+                      3,
+                      ifelse(prediRFtr_mtry_test$pred==prediRFtr_mtry_test$X4,
+                      4,0))))
+
+
+
+# Le fichier pour la soumission doit contenir 2 colonnes : « id » et « y ».
+# Le « id » est celui déjà dans le fichier « test.csv ».
+rfmodel_soumission2=data.frame("id"=datest$id,"y"=prediRFtr_mtry_test$y)
+
+# Sauvegarde du fichier de prédictions
+#pa=""
+#write.csv(rfmodel_soumission2,paste(pa,"rfmodel_soumission2.csv"), row.names = FALSE)
+
+# Soumettre ensuite le fichier créé "rfmodel_soumission2.csv" à Kaggle.
+
+
+```
+
+
+
+#BOOSTING OVA , sans optimiser,                                                 MODELE 3
+```{r}
+library(caret)
+#set.seed(123)
+train = train_train
+val = train_val
+
+library(caret)
+#set.seed(123)
+train = train_train
+val = train_val
+
+# Convertir variables categóricas a variables numéricas
+#train[, c("country", "difflevel")] <- lapply(train[, c("country", "difflevel")], as.factor)
+#val[, c("country", "difflevel")] <- lapply(val[, c("country", "difflevel")], as.factor)
+#train_matrix <- model.matrix(~.-1, data = train[, -17])
+#val_matrix <- model.matrix(~.-1, data = val[, -17])
+
+# Crear las variables dummy
+dummy_train <- dummyVars(~ country + difflevel, data = train)
+dummy_val <- dummyVars(~ country + difflevel, data = val)
+
+# Aplicar la transformación a los data frames
+train_onehot <- predict(dummy_train, newdata = train)
+val_onehot <- predict(dummy_val, newdata = val)
+
+# Agregar las nuevas variables dummy al data frame original
+train <- cbind(train, train_onehot)
+val <- cbind(val, val_onehot)
+
+train <- subset(train, select = -c(country, difflevel))
+val <- subset(val, select = -c(country, difflevel))
+
+
+```
+
+
+```{r}
+#verbose = 0 pour ne pas imprimimer les iterations
+
+library(xgboost)
+models <- list()
+for (i in levels(train$y)) {
+  y_train <- ifelse(train$y == i, 1, 0)
+  
+  model <- xgboost(data = as.matrix(train[, -which(names(train) == 'y')]), label = y_train, max_depth = 3, eta = 0.1, nround = 600, objective = "binary:logistic", verbose = 0)
+  models[[i]] <- model
+}
+```
+
+
+```{r}
+predictions <- matrix(0, nrow = nrow(val), ncol = length(levels(train$y)))
+for (i in seq_along(models)) {
+  model <- models[[i]]
+  pred <- predict(model, as.matrix(val[, -which(names(val) == 'y')]))
+  predictions[, i] <- pred
+}
+predicted_classes <- apply(predictions, 1, which.max)
+```
+
+
+```{r}
+predi_val =as.data.frame(predictions)
+predi_val
+```
+
+
+
+#prediction sur validation   NOTE: les probabilitees sont en notation scientifique.
+```{r}
+# Calcul des prédictions pour les données validation Ici, on obtient les probabilités estimées.
+predi_val$pred<-apply(predi_val, 1, max)
+predi_val
+```
+
+
+
+
+```{r}
+
+# Calcul des prédictions 
+
+predi_val$predy<-ifelse(predi_val$pred==predi_val$V1,
+                      1,
+                      ifelse(predi_val$pred==predi_val$V2,
+                      2,
+                      ifelse(predi_val$pred==predi_val$V3,
+                      3,
+                      ifelse(predi_val$pred==predi_val$V4,
+                      4,0))))
+
+predi_val
+```
+
+
+
+#évaluation du modèle
+```{r}
+# Tableau croisée entre les prédictions et les vraies valeurs
+CrossTable(predi_val$predy,val$y)
+
+
+# Taux de bonne classification.
+mean(predi_val$predy==val$y)
+```
+
+
+
+```{r}
+resmobile=rbind(resmobile,
+                "BOOSTING (OVA)"=c(mean(predi_val$predy==val$y),
+                      1-mean(predi_val$predy==val$y)))
+
+resmobile
+```
+
+
+
+---------------------------------------------
+#OPTIMISATION BOOSTING OVA                                                      MODELE 4
+# 1er ETAPE: recherche de parametres optImales 
+```{r}
+library(caret)
+library(xgboost)
+
+#train <- train_train
+#val <- train_val
+
+# Crear lista de combinaciones de hiperparámetros
+max_depth <- c( 2, 3, 4, 5, 6, 7, 8, 9, 10)
+nround <- c(300, 400, 500, 600, 700)
+param_grid <- expand.grid(max_depth = max_depth, nround = nround)
+
+# Inicializar objeto para guardar resultados
+results <- list()
+
+# Iterar a través de todas las combinaciones de hiperparámetros
+for (i in seq_len(nrow(param_grid))) {
+  
+  # Obtener los valores de los hiperparámetros para esta iteración
+  max_depth <- param_grid$max_depth[i]
+  nround <- param_grid$nround[i]
+  
+  # Ajustar modelo con los valores de hiperparámetros actuales
+  models <- list()
+  for (j in levels(train$y)) {
+    y_train <- ifelse(train$y == j, 1, 0)
+    model <- xgboost(data = as.matrix(train[, -which(names(train) == 'y')]), label = y_train, max_depth = max_depth, eta = 0.1, nround = nround, objective = "binary:logistic", verbose = 0)
+    models[[j]] <- model
+  }
+  
+  # Evaluar rendimiento en conjunto de validación
+  predictions <- matrix(0, nrow = nrow(val), ncol = length(levels(train$y)))
+  for (j in seq_along(models)) {
+    model <- models[[j]]
+    pred <- predict(model, as.matrix(val[, -which(names(val) == 'y')]))
+    predictions[, j] <- pred
+  }
+  predicted_classes <- apply(predictions, 1, which.max)
+  
+  
+  predi_val = as.data.frame(predictions)
+  predi_val$pred<-apply(predi_val,1,max)
+  
+  # Calcul des prédictions 
+
+predi_val$predy<-ifelse(predi_val$pred==predi_val$V1,
+                      1,
+                      ifelse(predi_val$pred==predi_val$V2,
+                      2,
+                      ifelse(predi_val$pred==predi_val$V3,
+                      3,
+                      ifelse(predi_val$pred==predi_val$V4,
+                      4,0))))
+  
+  
+  # Taux de bonne classification.
+  accuracy <- mean(predi_val$predy==val$y)
+  
+  # Guardar resultados
+  result <- list(max_depth = max_depth, nround = nround, accuracy = accuracy)
+  results[[i]] <- result
+  
+}
+
+
+# Encontrar la mejor combinación de hiperparámetros según la precisión
+results_df <- as.data.frame(do.call(rbind, results))
+
+# Encontrar la fila con el máximo valor de accuracy
+max_row <- which.max(results_df$accuracy)
+
+# Extraer los valores de max_depth, nround y accuracy en variables separadas
+best_max_depth <- results_df[[max_row, "max_depth"]]
+best_nround <- results_df[[max_row, "nround"]]
+best_accuracy <- results_df[[max_row, "accuracy"]]
+
+```
+
+
+#2e ETAPE : Ajuster un modele final en utilizant la valeur optimale de max_depth et nround
+```{r}
+library(xgboost)
+
+
+models <- list()
+for (i in levels(train$y)) {
+  y_train <- ifelse(train$y == i, 1, 0)
+  
+  model <- xgboost(data = as.matrix(train[, -which(names(train) == 'y')]), label = y_train, max_depth = best_max_depth, eta = 0.1, nround = best_nround, objective = "binary:logistic", verbose = 0)
+  models[[i]] <- model
+}
+
+predictions <- matrix(0, nrow = nrow(val), ncol = length(levels(train$y)))
+for (i in seq_along(models)) {
+  model <- models[[i]]
+  pred <- predict(model, as.matrix(val[, -which(names(val) == 'y')]))
+  predictions[, i] <- pred
+}
+predicted_classes <- apply(predictions, 1, which.max)
+
+predi_val =as.data.frame(predictions)
+
+predi_val$pred<-apply(predi_val, 1, max)
+
+# Calcul des prédictions 
+
+predi_val$predy<-ifelse(predi_val$pred==predi_val$V1,
+                      1,
+                      ifelse(predi_val$pred==predi_val$V2,
+                      2,
+                      ifelse(predi_val$pred==predi_val$V3,
+                      3,
+                      ifelse(predi_val$pred==predi_val$V4,
+                      4,0))))
+
+
+#évaluation du modèle
+#table(prediRF_tr_val$predy, train_val$y)
+
+# Tableau croisée entre les prédictions et les vraies valeurs
+CrossTable(predi_val$predy,val$y)
+
+
+# Taux de bonne classification.
+mean(predi_val$predy==val$y)
+
+resmobile=rbind(resmobile,
+                "BOOSTING (OVA opt)"=c(mean(predi_val$predy==val$y),
+                      1-mean(predi_val$predy==val$y)))
+
+resmobile
+```
+
+
+
+-------------------------------------------------------------------------------------------
+#soumission bosting ova sans optimiser
+#sur donnees test
+```{r}
+
+library(caret)
+
+
+train = datrain
+val = datest
+
+# Crear las variables dummy
+dummy_train <- dummyVars(~ country + difflevel, data = train)
+dummy_val <- dummyVars(~ country + difflevel, data = val)
+
+# Aplicar la transformación a los data frames
+train_onehot <- predict(dummy_train, newdata = train)
+val_onehot <- predict(dummy_val, newdata = val)
+
+# Agregar las nuevas variables dummy al data frame original
+train <- cbind(train, train_onehot)
+val <- cbind(val, val_onehot)
+
+train <- subset(train, select = -c(country, difflevel))
+val <- subset(val, select = -c(country, difflevel))
+
+#verbose = 0 pour ne pas imprimimer les iterations
+
+library(xgboost)
+models <- list()
+for (i in levels(train$y)) {
+  y_train <- ifelse(train$y == i, 1, 0)
+  
+  model <- xgboost(data = as.matrix(train[, -which(names(train) == 'y')]), label = y_train, max_depth = 3, eta = 0.1, nround = 600, objective = "binary:logistic", verbose = 0)
+  models[[i]] <- model
+}
+
+predictions <- matrix(0, nrow = nrow(val), ncol = length(levels(train$y)))
+for (i in seq_along(models)) {
+  model <- models[[i]]
+  pred <- predict(model, as.matrix(val[, -which(names(val) == 'id')]))
+  predictions[, i] <- pred
+}
+predicted_classes <- apply(predictions, 1, which.max)
+
+prediBStr_test =as.data.frame(predictions) 
+prediBStr_test$pred<-apply(prediBStr_test, 1, max)
+
+
+ # Calcul des prédictions sur test
+
+prediBStr_test$y<-ifelse(prediBStr_test$pred==prediBStr_test$V1,
+                      1,
+                      ifelse(prediBStr_test$pred==prediBStr_test$V2,
+                      2,
+                      ifelse(prediBStr_test$pred==prediBStr_test$V3,
+                      3,
+                      ifelse(prediBStr_test$pred==prediBStr_test$V4,
+                      4,0))))
+
+
+# Le fichier pour la soumission doit contenir 2 colonnes : « id » et « y ».
+# Le « id » est celui déjà dans le fichier « test.csv ».
+bsmodel_soumission4=data.frame("id"=datest$id,"y"=prediBStr_test$y)
+
+# Sauvegarde du fichier de prédictions
+#pa=""
+#write.csv(bsmodel_soumission3,paste(pa,"bsmodel_soumission4.csv"), row.names = FALSE)
+
+```
+
+
+
+-------------------------------------------------------------------------------------------
+#soumission bosting ova optimisee
+#sur donnees test
+```{r}
+library(caret)
+
+#pour soumission boosting  ova
+
+train = datrain
+val = datest
+
+# Crear las variables dummy
+dummy_train <- dummyVars(~ country + difflevel, data = train)
+dummy_val <- dummyVars(~ country + difflevel, data = val)
+
+# Aplicar la transformación a los data frames
+train_onehot <- predict(dummy_train, newdata = train)
+val_onehot <- predict(dummy_val, newdata = val)
+
+# Agregar las nuevas variables dummy al data frame original
+train <- cbind(train, train_onehot)
+val <- cbind(val, val_onehot)
+
+train <- subset(train, select = -c(country, difflevel))
+val <- subset(val, select = -c(country, difflevel))
+
+#verbose = 0 pour nèest imprimimer les iterations
+
+library(xgboost)
+models <- list()
+for (i in levels(train$y)) {
+  y_train <- ifelse(train$y == i, 1, 0)
+  
+  model <- xgboost(data = as.matrix(train[, -which(names(train) == 'y')]), label = y_train, max_depth = best_max_depth, eta = 0.1, nround = best_nround, objective = "binary:logistic", verbose = 0)
+  models[[i]] <- model
+}
+
+predictions <- matrix(0, nrow = nrow(val), ncol = length(levels(train$y)))
+for (i in seq_along(models)) {
+  model <- models[[i]]
+  pred <- predict(model, as.matrix(val[, -which(names(val) == 'id')]))
+  predictions[, i] <- pred
+}
+predicted_classes <- apply(predictions, 1, which.max)
+
+prediBStr_test =as.data.frame(predictions) 
+prediBStr_test$pred<-apply(prediBStr_test, 1, max)
+
+  # Calcul des prédictions sur test
+
+prediBStr_test$y<-ifelse(prediBStr_test$pred==prediBStr_test$V1,
+                      1,
+                      ifelse(prediBStr_test$pred==prediBStr_test$V2,
+                      2,
+                      ifelse(prediBStr_test$pred==prediBStr_test$V3,
+                      3,
+                      ifelse(prediBStr_test$pred==prediBStr_test$V4,
+                      4,0))))
+
+
+# Le fichier pour la soumission doit contenir 2 colonnes : « id » et « y ».
+# Le « id » est celui déjà dans le fichier « test.csv ».
+bsmodel_soumission6=data.frame("id"=datest$id,"y"=prediBStr_test$y)
+
+# Sauvegarde du fichier de prédictions
+#pa=""
+#write.csv(bsmodel_soumission6,paste(pa,"bsmodel_soumission6.csv"), row.names = FALSE)
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
